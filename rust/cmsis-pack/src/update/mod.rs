@@ -6,7 +6,7 @@ use crate::pdsc::Package;
 
 mod download;
 
-use crate::update::download::DownloadContext;
+use crate::update::download::{DownloadContext, PackageValidator};
 pub use crate::update::download::{DownloadConfig, DownloadProgress};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -38,5 +38,5 @@ where
         .build()?;
 
     let dl_cntx = DownloadContext::new(config, progress)?;
-    rt.block_on(async { Ok(dl_cntx.download_iterator(pdsc_list).await) })
+    rt.block_on(async { Ok(dl_cntx.download_iterator(pdsc_list, &Some(PackageValidator {})).await) })
 }

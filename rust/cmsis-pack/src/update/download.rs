@@ -38,6 +38,40 @@ pub trait IntoDownload {
     fn into_fd<D: DownloadConfig>(&self, _: &D) -> PathBuf;
 }
 
+
+pub trait DownloadValidator {
+    fn validate(&self, _: &PathBuf) -> bool;
+}
+
+pub struct PdscValidator {}
+
+impl DownloadValidator for PdscValidator {
+    fn validate(&self, filename: &PathBuf) -> bool {
+        match Package::from_path(&filename) {
+            Ok(_) => true,
+            Err(e) => {
+                log::debug!("Error validating {:?}: {}", filename.file_name().unwrap(), e);
+                false
+            }
+        }
+    }
+}
+
+pub struct PackageValidator {}
+
+impl DownloadValidator for PackageValidator {
+    fn validate(&self, filename: &PathBuf) -> bool {
+        let file = std::fs::File::open(&filename).unwrap();
+        match zip::ZipArchive::new(file) {
+            Ok(_) => true,
+            Err(e) => {
+                log::debug!("Error validating {:?}: {}", filename.file_name().unwrap(), e);
+                false
+            }
+        }
+    }
+}
+
 impl IntoDownload for PdscRef {
     fn into_uri(&self) -> Result<Url, Error> {
         let &PdscRef {
@@ -191,10 +225,11 @@ where
         }
     }
 
-    pub async fn download_iterator<I>(&'a self, iter: I) -> Vec<PathBuf>
+    pub async fn download_iterator<I, V>(&'a self, iter: I, validator: &Option<V>) -> Vec<PathBuf>
     where
         I: IntoIterator + 'a,
         <I as IntoIterator>::Item: IntoDownload,
+        V: DownloadValidator,
     {
         let to_dl: Vec<(Url, PathBuf)> = iter
             .into_iter()
@@ -213,9 +248,20 @@ where
                 let r = self.download_file(from.0.clone(), from.1.clone()).await;
                 self.prog.complete();
                 match r {
-                    Ok(p) => Some(p),
+                    Ok(p) => match validator {
+                        Some(v) => {
+                            if v.validate(&p) {
+                                Some(p)
+                            } else {
+                                log::error!("Download of {:?} failed validation", from.0.clone().as_str());
+                                let _ = std::fs::remove_file(p);
+                                None
+                            }
+                        }
+                        None => Some(p),
+                    },
                     Err(e) => {
-                        log::error!("download of {:?} failed: {}", from.0.clone(), e);
+                        log::error!("Download of {:?} failed: {}", from.0.clone(), e);
                         None
                     }
                 }
@@ -282,7 +328,7 @@ where
         pdscs.dedup_by_key(|pdsc| pdsc_url(pdsc));
         log::info!("Found {} Pdsc entries", pdscs.len());
 
-        Ok(self.download_iterator(pdscs.into_iter()).await)
+        Ok(self.download_iterator(pdscs.into_iter(), &Some(PdscValidator {})).await)
     }
 
     pub(crate) async fn download_vidx<I: Into<String>>(
