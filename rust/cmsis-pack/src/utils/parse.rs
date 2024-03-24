@@ -1,10 +1,10 @@
-use std::fs::File;
+use std::fmt::Display;
 use std::io::BufRead;
 use std::path::Path;
 use std::str::FromStr;
-use std::{fmt::Display, io::BufReader};
 
 use crate::utils::ResultLogExt;
+use minidom::quick_xml::Reader;
 use minidom::{Children, Element};
 
 use anyhow::{format_err, Error};
@@ -89,18 +89,17 @@ pub fn assert_root_name(from: &Element, name: &str) -> Result<(), Error> {
 pub trait FromElem: Sized {
     fn from_elem(e: &Element) -> Result<Self, Error>;
 
-    fn from_reader<T: BufRead>(r: &mut T) -> Result<Self, Error> {
+    fn from_reader<T: BufRead>(r: &mut Reader<T>) -> Result<Self, Error> {
         let mut root = Element::from_reader(r)?;
         root.set_attr::<&str, Option<String>>("xmlns:xs", None);
         Self::from_elem(&root)
     }
     fn from_string(s: &str) -> Result<Self, Error> {
-        let mut r = BufReader::new(s.as_bytes());
+        let mut r = Reader::from_str(s);
         Self::from_reader(&mut r)
     }
     fn from_path(p: &Path) -> Result<Self, Error> {
-        let file = File::open(p)?;
-        let mut r = BufReader::new(file);
+        let mut r = Reader::from_file(p)?;
         Self::from_reader(&mut r)
     }
     fn vec_from_children(clds: Children) -> Vec<Self> {
