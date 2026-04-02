@@ -143,7 +143,7 @@ pub struct Processor {
     pub default_reset_sequence: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct ProcessorBuilder {
     core: Option<Core>,
     units: Option<usize>,
@@ -229,12 +229,22 @@ struct ProcessorsBuilder(Vec<ProcessorBuilder>);
 impl ProcessorsBuilder {
     fn merge(mut self, parent: &Option<Self>) -> Result<Self, Error> {
         if let Some(parent) = parent {
-            if let [parent] = &parent.0[..] {
-                self.0 = self.0.into_iter().map(|x| x.merge(parent)).collect();
-            } else {
-                Err(format_err!(
-                    "Support for two parent processors not implemented!"
-                ))?;
+            // Add all processors from the parent to the child (if not already present).
+            for parent in &parent.0 {
+                if !self.0.iter().any(|child| child.name == parent.name) {
+                    self.0.push(parent.clone());
+                }
+            }
+
+            // Merge attributes from the parent into the child.
+            for parent in &parent.0 {
+                for child in &mut self.0 {
+                    // If the parent processor has no Pname,
+                    // then the parent attribute applies to all processors.
+                    if parent.name.is_none() || parent.name == child.name {
+                        *child = std::mem::take(child).merge(parent);
+                    }
+                }
             }
         }
         Ok(self)
@@ -245,9 +255,14 @@ impl ProcessorsBuilder {
     }
 
     fn build(self, debugs: Vec<Debug>) -> Result<Vec<Processor>, Error> {
+        let single_core = self.0.len() == 1;
         let mut vec = vec![];
         for processor in self.0.into_iter() {
-            vec.extend(processor.build(&debugs)?);
+            // Ignore unnamed processors on a multi-core device, since they represent attributes
+            // that apply to all processors and have already been merged.
+            if single_core || processor.name.is_some() {
+                vec.extend(processor.build(&debugs)?);
+            }
         }
         Ok(vec)
     }
